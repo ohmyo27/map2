@@ -1,0 +1,372 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+    <title>로케이션 맵 (최종완성)</title>
+    
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" integrity="sha256-p4NxAoJBhIIN+hmNHrzRCf9tD/miZyoHS5obTRR9BMY=" crossorigin=""/>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js" integrity="sha256-20nQCchB9co0qIjJZRGuk2/Z9VM+kNiyxNV1lvTlZBo=" crossorigin=""></script>
+
+    <style>
+        /* 전체 레이아웃 설정 */
+        body { margin: 0; padding: 0; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; overflow: hidden; display: flex; }
+        
+        /* 1. 왼쪽 사이드바 (PC용 리스트) */
+        .sidebar {
+            width: 320px; height: 100vh; background: white; border-right: 1px solid #ddd;
+            overflow-y: auto; z-index: 2000; display: flex; flex-direction: column;
+            box-shadow: 2px 0 10px rgba(0,0,0,0.1);
+        }
+        .sidebar-header { padding: 20px; border-bottom: 1px solid #eee; background: #f8f9fa; }
+        .sidebar-header h2 { margin: 0; font-size: 18px; color: #333; font-weight: 700; }
+        
+        .location-item {
+            padding: 15px; border-bottom: 1px solid #f1f1f1; cursor: pointer; display: flex; gap: 12px; align-items: start; transition: 0.2s;
+        }
+        .location-item:hover { background: #f1f8ff; }
+        
+        /* 리스트 썸네일 박스 */
+        .thumb-box {
+            width: 70px; height: 70px; border-radius: 8px; background: #eee; overflow: hidden; flex-shrink: 0;
+            display: flex; align-items: center; justify-content: center; color: #aaa; font-size: 10px;
+        }
+        .thumb-box img { width: 100%; height: 100%; object-fit: cover; }
+        
+        .info-box { flex: 1; }
+        .info-box h3 { margin: 0 0 5px 0; font-size: 16px; color: #333; }
+        .info-box p { margin: 0; font-size: 13px; color: #666; line-height: 1.4; }
+        .genre-tag { display: inline-block; padding: 3px 6px; border-radius: 4px; font-size: 11px; color: white; margin-bottom: 4px; font-weight: bold; }
+
+        /* 모바일에서는 사이드바 숨기기 */
+        @media (max-width: 768px) { .sidebar { display: none; } }
+
+        /* 2. 지도 영역 */
+        #map { flex: 1; height: 100vh; z-index: 1; position: relative; }
+        
+        /* 핀 눌렀을 때 나오는 팝업 이미지 */
+        .popup-img { width: 100%; height: 150px; object-fit: cover; border-radius: 8px; margin-top: 8px; cursor: pointer; display: block; }
+
+        /* 상단 검색창 */
+        .search-wrapper { position: absolute; top: 20px; left: 50%; transform: translateX(-50%); width: 90%; max-width: 400px; z-index: 3000; }
+        .search-box { background: white; border-radius: 8px; box-shadow: 0 4px 15px rgba(0,0,0,0.15); display: flex; padding: 5px; }
+        .search-box input { flex: 1; border: none; outline: none; font-size: 16px; padding: 10px; }
+        .suggestion-box { background: white; width: 100%; max-height: 300px; overflow-y: auto; box-shadow: 0 4px 15px rgba(0,0,0,0.15); border-radius: 0 0 8px 8px; display: none; margin-top: 2px; }
+        .suggestion-item { padding: 12px; border-bottom: 1px solid #eee; cursor: pointer; font-size: 14px; }
+        .suggestion-item:hover { background-color: #f5f5f5; }
+
+        /* 하단 + 버튼 */
+        .add-btn {
+            position: absolute; bottom: 30px; right: 20px; width: 60px; height: 60px;
+            background: #ff4757; color: white; border-radius: 50%; font-size: 30px; border: none;
+            box-shadow: 0 4px 10px rgba(0,0,0,0.3); z-index: 2000; cursor: pointer;
+        }
+        
+        /* 위치 확정 버튼 (처음엔 숨김) */
+        .confirm-container { display: none; position: absolute; bottom: 40px; left: 0; width: 100%; text-align: center; z-index: 2000; pointer-events: none; }
+        .confirm-btn { background: #2ed573; color: white; padding: 12px 25px; border-radius: 30px; font-size: 16px; font-weight: bold; border: none; box-shadow: 0 4px 10px rgba(0,0,0,0.3); cursor: pointer; pointer-events: auto; }
+        .cancel-btn-main { background: white; color: #555; border: none; padding: 12px 20px; border-radius: 30px; margin-left: 10px; font-weight: bold; box-shadow: 0 4px 10px rgba(0,0,0,0.2); cursor: pointer; pointer-events: auto; }
+
+        /* 3. 입력 폼 (모달창) */
+        .modal { display: none; position: fixed; top: 0; left: 0; width: 100%; height: 100%; background: rgba(0,0,0,0.6); z-index: 4000; justify-content: center; align-items: center; }
+        .modal-content { background: white; padding: 25px; border-radius: 16px; width: 85%; max-width: 320px; max-height: 90vh; overflow-y: auto; }
+        
+        input, select, textarea { width: 100%; box-sizing: border-box; margin: 8px 0; padding: 12px; border: 1px solid #ddd; border-radius: 8px; font-size: 16px; }
+        
+        /* 사진 업로드 버튼 디자인 */
+        .file-label {
+            display: block; padding: 15px; margin-top: 5px;
+            border: 2px dashed #ddd; border-radius: 8px; text-align: center; color: #888; cursor: pointer; transition: 0.3s;
+        }
+        .file-label:hover { border-color: #ff4757; color: #ff4757; background: #fff0f1; }
+        
+        /* 사진 미리보기 영역 */
+        #preview_container { display: none; position: relative; margin-top: 10px; }
+        #image_preview { width: 100%; height: 180px; object-fit: cover; border-radius: 8px; }
+        
+        .save-btn { width: 100%; background: #ff4757; color: white; padding: 15px; border: none; border-radius: 10px; font-size: 16px; font-weight: bold; cursor: pointer; margin-top: 15px; }
+        .close-btn { width: 100%; background: transparent; color: #888; padding: 10px; border: none; margin-top: 5px; cursor: pointer; }
+    </style>
+</head>
+<body>
+
+    <div class="sidebar">
+        <div class="sidebar-header">
+            <h2>📁 로케이션 리스트 (<span id="count">0</span>)</h2>
+        </div>
+        <div id="location_list">
+            <div style="padding:20px; color:#999; text-align:center;">데이터 불러오는 중...</div>
+        </div>
+    </div>
+
+    <div id="map">
+        <div class="search-wrapper">
+            <div class="search-box">
+                <input type="text" id="search_input" placeholder="🔍 장소 검색 (예: 강남역)" onkeyup="handleSearch(this.value)">
+            </div>
+            <div id="main_suggestions" class="suggestion-box"></div>
+        </div>
+
+        <button class="add-btn" id="addBtn" onclick="startAddMode()">+</button>
+
+        <div class="confirm-container" id="confirmBtnContainer">
+            <button class="confirm-btn" onclick="openForm()">📍 이 위치로 결정</button>
+            <button class="cancel-btn-main" onclick="cancelAddMode()">취소</button>
+        </div>
+    </div>
+
+    <div id="modal" class="modal">
+        <div class="modal-content">
+            <h3 style="margin-top:0; text-align:center;">📝 로케이션 등록</h3>
+            
+            <input type="text" id="place_name" placeholder="장소명 (필수)">
+            <select id="genre">
+                <option value="스릴러">🔴 스릴러</option>
+                <option value="로맨스">🟡 로맨스</option>
+                <option value="드라마">🔵 드라마</option>
+                <option value="공포">⚫ 공포</option>
+                <option value="액션">🟣 액션</option>
+            </select>
+            <input type="text" id="address_text" placeholder="주소">
+            <input type="text" id="comment" placeholder="한줄평 (특이사항)">
+
+            <label for="file_input" class="file-label">📸 사진 추가하기 (클릭)</label>
+            <input type="file" id="file_input" accept="image/*" style="display:none" onchange="handleFileSelect(this)">
+            
+            <div id="preview_container">
+                <img id="image_preview" src="">
+                <p style="font-size:12px; color:#666; text-align:center; margin:5px 0;">*이 사진이 등록됩니다</p>
+            </div>
+
+            <input type="hidden" id="lat"><input type="hidden" id="lng">
+            
+            <button class="save-btn" id="saveBtn" onclick="saveData()">등록하기</button>
+            <button class="close-btn" onclick="closeModal()">취소</button>
+        </div>
+    </div>
+
+    <script>
+        // ★ 님의 주소를 여기 넣었습니다. 수정하지 마세요! ★
+        const SCRIPT_URL = "https://script.google.com/macros/s/AKfycbyEsgPRr5OqZdqkI30XbGh6zbs9iovR4XvHfPNOmwxvpzFoYLGGdorN2FPtAjAjJ27v2w/exec";
+
+        // 1. 지도 생성 (서울 시청 중심)
+        var map = L.map('map').setView([37.5665, 126.9780], 13);
+        
+        // 2. 다양한 지도 레이어 추가 (오른쪽 위 버튼으로 변경 가능)
+        var layers = {
+            "기본 지도": L.tileLayer('https://{s}.basemaps.cartocdn.com/rastertiles/voyager/{z}/{x}/{y}{r}.png', {maxZoom: 19}),
+            "다크 모드": L.tileLayer('https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png', {maxZoom: 19}),
+            "위성 지도": L.tileLayer('https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}', {maxZoom: 18})
+        };
+        layers["기본 지도"].addTo(map);
+        L.control.layers(layers).addTo(map);
+
+        var tempMarker = null; // 내가 찍을 핀
+        var markers = []; // 남들이 찍은 핀들
+        var uploadImageBase64 = ""; // 사진 데이터 담을 변수
+
+        // 3. 서버에서 데이터 가져오기 & 리스트 만들기
+        fetch(SCRIPT_URL)
+            .then(res => res.json())
+            .then(data => {
+                var listEl = document.getElementById('location_list');
+                listEl.innerHTML = ''; 
+                document.getElementById('count').innerText = data.length;
+
+                data.forEach(row => {
+                    if(row.lat && row.lng) {
+                        // 3-1. 지도에 핀 찍기
+                        var imgHtml = "";
+                        // 사진이 있으면 팝업에 이미지 태그 추가
+                        if(row['이미지'] && row['이미지'].startsWith("http")) {
+                            imgHtml = `<img src="${row['이미지']}" class="popup-img" onclick="window.open('${row['이미지']}')">`;
+                        }
+                        
+                        var marker = L.marker([row.lat, row.lng]).addTo(map);
+                        marker.bindPopup(`<b>${row['장소명']}</b><br>${row['한줄평']}${imgHtml}`);
+                        markers.push(marker);
+
+                        // 3-2. 왼쪽 리스트 만들기
+                        var item = document.createElement('div');
+                        item.className = 'location-item';
+                        
+                        // 썸네일 처리
+                        var thumbHtml = `<div class="thumb-box">No Img</div>`;
+                        if(row['이미지'] && row['이미지'].startsWith("http")) {
+                            thumbHtml = `<div class="thumb-box"><img src="${row['이미지']}"></div>`;
+                        }
+
+                        // 장르 태그 색상
+                        var color = '#666';
+                        if(row['장르/분위기'] == '스릴러') color = '#ff4757';
+                        else if(row['장르/분위기'] == '로맨스') color = '#ffa502';
+                        else if(row['장르/분위기'] == '드라마') color = '#1e90ff';
+
+                        item.innerHTML = `
+                            ${thumbHtml}
+                            <div class="info-box">
+                                <span class="genre-tag" style="background:${color}">${row['장르/분위기']}</span>
+                                <h3>${row['장소명']}</h3>
+                                <p>${row['주소'] || '주소 미입력'}</p>
+                            </div>
+                        `;
+                        
+                        // 리스트 클릭 시 해당 핀으로 이동
+                        item.onclick = () => {
+                            map.setView([row.lat, row.lng], 17);
+                            marker.openPopup();
+                        };
+                        listEl.appendChild(item);
+                    }
+                });
+            });
+
+        // 4. 검색 기능 (자동완성 & 핀 찍기 연결)
+        var debounceTimer;
+        function handleSearch(query) {
+            clearTimeout(debounceTimer);
+            var list = document.getElementById('main_suggestions');
+            if(query.length < 2) { list.style.display = 'none'; return; }
+
+            debounceTimer = setTimeout(() => {
+                fetch(`https://nominatim.openstreetmap.org/search?format=json&q=${query}&addressdetails=1`)
+                    .then(res => res.json())
+                    .then(data => {
+                        list.innerHTML = '';
+                        if(data.length > 0) {
+                            list.style.display = 'block';
+                            data.forEach(item => {
+                                var div = document.createElement('div');
+                                div.className = 'suggestion-item';
+                                div.innerHTML = `<b>${item.display_name.split(',')[0]}</b><br><span style="color:#888;font-size:12px">${item.display_name}</span>`;
+                                div.onclick = () => {
+                                    var lat = item.lat; var lon = item.lon;
+                                    map.setView([lat, lon], 17);
+                                    
+                                    // 핀 찍기 모드 시작
+                                    startAddMode([lat, lon]); 
+                                    
+                                    document.getElementById('search_input').value = item.display_name;
+                                    document.getElementById('address_text').value = item.display_name; // 주소 미리 입력
+                                    list.style.display = 'none';
+                                };
+                                list.appendChild(div);
+                            });
+                        } else { list.style.display = 'none'; }
+                    });
+            }, 300);
+        }
+
+        // 5. 사진 파일 선택 & 압축 (핵심 기술!)
+        function handleFileSelect(input) {
+            if (input.files && input.files[0]) {
+                var reader = new FileReader();
+                reader.onload = function(e) {
+                    var img = new Image();
+                    img.src = e.target.result;
+                    img.onload = function() {
+                        // 캔버스로 리사이징 (가로 800px로 줄여서 용량 최적화)
+                        var canvas = document.createElement('canvas');
+                        var ctx = canvas.getContext('2d');
+                        var MAX_WIDTH = 800;
+                        var width = img.width; var height = img.height;
+                        
+                        if (width > MAX_WIDTH) { height *= MAX_WIDTH / width; width = MAX_WIDTH; }
+                        canvas.width = width; canvas.height = height;
+                        ctx.drawImage(img, 0, 0, width, height);
+                        
+                        // 압축된 데이터 (JPEG 퀄리티 0.7)
+                        var dataUrl = canvas.toDataURL('image/jpeg', 0.7);
+                        
+                        // 미리보기 표시
+                        document.getElementById('image_preview').src = dataUrl;
+                        document.getElementById('preview_container').style.display = 'block';
+                        
+                        // 전송용 데이터 (앞에 'data:image...' 떼고 내용만 담기)
+                        uploadImageBase64 = dataUrl.split(',')[1];
+                    }
+                }
+                reader.readAsDataURL(input.files[0]);
+            }
+        }
+
+        // 6. 데이터 저장 (사진 포함 전송)
+        function saveData() {
+            var name = document.getElementById('place_name').value;
+            var genre = document.getElementById('genre').value;
+            var addr = document.getElementById('address_text').value;
+            var comment = document.getElementById('comment').value;
+            var lat = document.getElementById('lat').value;
+            var lng = document.getElementById('lng').value;
+
+            if(!name) { alert("장소명을 입력해주세요!"); return; }
+
+            var btn = document.getElementById('saveBtn');
+            btn.innerText = "저장 중... (사진 업로드 중)";
+            btn.disabled = true;
+
+            // 전송할 데이터 포장
+            var payload = new URLSearchParams();
+            payload.append('place_name', name);
+            payload.append('genre', genre);
+            payload.append('address', addr);
+            payload.append('lat', lat);
+            payload.append('lng', lng);
+            payload.append('comment', comment);
+            
+            // 사진이 있으면 같이 넣기
+            if(uploadImageBase64) {
+                payload.append('image_data', uploadImageBase64);
+                payload.append('image_mime', 'image/jpeg');
+            }
+
+            // 서버로 발사!
+            fetch(SCRIPT_URL, { 
+                method: 'POST', 
+                body: payload
+            })
+            .then(() => {
+                alert("등록되었습니다!");
+                location.reload(); 
+            })
+            .catch(err => {
+                alert("에러: " + err);
+                btn.innerText = "등록하기";
+                btn.disabled = false;
+            });
+        }
+
+        // --- 기타 UI 함수들 ---
+        function startAddMode(coords) {
+            var center = coords ? coords : map.getCenter();
+            if(tempMarker) map.removeLayer(tempMarker);
+            tempMarker = L.marker(center, {draggable: true}).addTo(map);
+            tempMarker.bindPopup("위치를 잡고 버튼을 누르세요").openPopup();
+            
+            document.getElementById('addBtn').style.display = 'none';
+            document.getElementById('confirmBtnContainer').style.display = 'block';
+        }
+        function cancelAddMode() {
+            if(tempMarker) { map.removeLayer(tempMarker); tempMarker = null; }
+            document.getElementById('addBtn').style.display = 'flex';
+            document.getElementById('confirmBtnContainer').style.display = 'none';
+        }
+        function openForm() {
+            if(!tempMarker) return;
+            var c = tempMarker.getLatLng();
+            document.getElementById('lat').value = c.lat; document.getElementById('lng').value = c.lng;
+            document.getElementById('modal').style.display = 'flex';
+        }
+        function closeModal() { 
+            document.getElementById('modal').style.display = 'none'; 
+            document.getElementById('file_input').value = ""; // 파일 초기화
+            document.getElementById('preview_container').style.display = 'none';
+            uploadImageBase64 = "";
+        }
+        window.onclick = function(e) { 
+            if(e.target == document.getElementById('modal')) closeModal(); 
+            if (!e.target.closest('.search-wrapper')) document.getElementById('main_suggestions').style.display = 'none';
+        }
+    </script>
+</body>
+</html>
